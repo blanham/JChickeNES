@@ -1,3 +1,4 @@
+
 package com.pack.chickenes;
 import static java.lang.System.*;
 public class JMOS6502 {
@@ -57,7 +58,7 @@ public class JMOS6502 {
 				out.printf("%02X %02X %02X ", read_ram(pc),read_ram(pc+1),read_ram(pc+2));
 				break;
 		}
-		out.printf("%-16s", op);
+		out.printf("%-32s", op);
 		out.printf("A:%02X X:%02X Y:%02X P:%02X SP:%02X CYC: %3d\n", a,x,y,flags,sp, tmpCycles);
 	}
 	private void printAbsolute(String name){
@@ -73,8 +74,8 @@ public class JMOS6502 {
 	private void printImmediate(String name){
 		print_stats(String.format("%s #$%02X", name, read_ram(pc+1)),2);
 	}
-	private void printZeroPage(String name, byte value){
-		print_stats(String.format("%s #$%02X = %02x", name, read_ram(pc+1), value),2);
+	private void printZeroPage(String name){
+		print_stats(String.format("%s $%02X = %02x", name, read_ram(pc+1), read_ram(read_ram(pc+1) & 0xFF)),2);
 
 	}
 	private void checkFlags(int val)
@@ -89,6 +90,11 @@ public class JMOS6502 {
 		}else{
 			flags &= ~0x80;
 		}
+	}
+	private void popPC(){
+		pc = ram[0x100 + ++sp] & 0xff;
+		pc |= ram[0x100 + ++sp] << 8;
+		pc &=0xFFFF;
 	}
 	private void pushPC(){
 		pc += 2;
@@ -109,18 +115,25 @@ public class JMOS6502 {
 				pc =   (read_ram(pc+1) & 0xFF) + (read_ram(pc+2) << 8);
 				cycles += 6;
 				break;
+			case 0x60:
+				popPC();
+				pc++;
+				cycles +=6;
+				break;
 		}
 	}
 	private void doFlags(int op){
 		switch(op){
 		case 0x18: flags &= ~0x1; pc++; cycles += 2; break;
 		case 0x38: flags |= 0x1; pc++; cycles += 2; break;
+		//case 0x18: flags &= ~0x1; pc++; cycles += 2; break;
+		case 0x78: flags |= 0x04; pc++; cycles += 2; break;
+		case 0xF8: flags |= 0x08; pc++; cycles += 2; break;
 		}
 	}
 	private void doBranch(boolean condition){
 		cycles += 2;
 		if(condition){
-			System.out.println("BRANCH");
 			int savepc = pc + (char)read_ram(pc + 1);
 			pc = savepc;
 			cycles += 1;
@@ -130,42 +143,82 @@ public class JMOS6502 {
 	}
 	public void logger(int op){
 		switch(op){
+		//BIT
+		case 0x24: printZeroPage("BIT"); break;
 		//Branches
+		case 0x10: printBranch("BPL"); break;
+		case 0x30: printBranch("BMI"); break;
+		case 0x50: printBranch("BVC"); break;
+		case 0x70: printBranch("BVS"); break;
 		case 0x90: printBranch("BCC"); break;
 		case 0xB0: printBranch("BCS"); break;
+		case 0xD0: printBranch("BNE"); break;
+		case 0xF0: printBranch("BEQ"); break;
 		//Flags
 		case 0x18: printImplied("CLC"); break;
 		case 0x38: printImplied("SEC"); break;
+		case 0x78: printImplied("SEI"); break;
+		case 0xF8: printImplied("SED"); break;
+
 		//JMPs
 		case 0x20: printAbsolute("JSR"); break;
 		case 0x4C: printAbsolute("JMP"); break;
+		case 0x60: printImplied("RTS"); break;
+		//LDA
+		case 0xA9: printImmediate("LDA"); break;
 		//LDX
 		case 0xA2: printImmediate("LDX"); break;
 		//NOP
 		case 0xEA: printImplied("NOP"); break;
 		//STX
-		case 0x86: printZeroPage("STX", x); break;
-
+		case 0x85: printZeroPage("STA"); break;
+		//STX
+		case 0x86: printZeroPage("STX"); break;
+		//default:
+			//out.printf("invalid op%x\n", op);
 		}
+	}
+	private void bit(byte value){
+		if((a & value) != 0){
+			flags &= 0xfd;
+		}else{
+			flags |= 0x02;
+		}
+		flags &= 0x3f;
+		flags |= value & 0xC0;
 	}
 	public void do_op(){
 		int op = read_ram(pc) & 0xFF;
 		logger(op);
 		switch(op)
 		{
+		//BIT
+		case 0x24: bit(readZeroPage()); break;
 		//Branches
-		case 0x90: doBranch((flags & 0x1) == 0);
-		case 0xB0: doBranch((flags & 0x1) != 0);
+		case 0x10: doBranch((flags & 0x80) == 0); break;
+		case 0x30: doBranch((flags & 0x80) != 0); break;
+		case 0x50: doBranch((flags & 0x40) == 0); break;
+		case 0x70: doBranch((flags & 0x40) != 0); break;
+		case 0x90: doBranch((flags & 0x01) == 0); break;
+		case 0xB0: doBranch((flags & 0x01) != 0); break;
+		case 0xD0: doBranch((flags & 0x02) == 0); break;
+		case 0xF0: doBranch((flags & 0x02) != 0); break;
 		//Flags
-		case 0x18: case 0x38: doFlags(op);
+		case 0x18: case 0x38: case 0x58: case 0x78: case 0xB8: case 0xD8: case 0xF8:
+			doFlags(op);
+			break;
 		//Jumps
-		case 0x20: case 0x4C:
+		case 0x20: case 0x4C: case 0x60:
 			doJumps(op);
 			break;
+		//LDA
+		case 0xA9: a = readImmediate(); checkFlags(a); break;
 		//LDX
 		case 0xA2: x = readImmediate(); checkFlags(x); break;
 		//NOP
 		case 0xEA: cycles += 2; pc++; break;
+		//STA
+		case 0x85: writeZeroPage(a); break;
 		//STX
 		case 0x86: writeZeroPage(x); break;
 		default:
@@ -179,7 +232,12 @@ public class JMOS6502 {
 	private byte readImmediate(){
 		cycles += 2;
 		pc+=2;
-		return read_ram(pc+1);
+		return read_ram(pc-1);
+	}
+	private byte readZeroPage(){
+		pc +=2;
+		cycles +=3;
+		return read_ram(read_ram(pc-1) & 0xFF);
 	}
 	private void writeZeroPage(byte value){
 		write_ram(read_ram(pc+1) & 0xFF, value);

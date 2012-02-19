@@ -31,6 +31,7 @@ public class NES extends JMOS6502 {
 	void write_ram(int address, byte val)
 	{
 		address &= 0xFFFF;
+		ram[address] = val;
 		if (0x8000 <= address){
 			System.out.println("invalid write");
 		}
