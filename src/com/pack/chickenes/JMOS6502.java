@@ -75,7 +75,7 @@ public class JMOS6502 {
 		print_stats(String.format("%s #$%02X", name, read_ram(pc+1)),2);
 	}
 	private void printZeroPage(String name){
-		print_stats(String.format("%s $%02X = %02x", name, read_ram(pc+1), read_ram(read_ram(pc+1) & 0xFF)),2);
+		print_stats(String.format("%s $%02X = %02X", name, read_ram(pc+1), read_ram(read_ram(pc+1) & 0xFF)),2);
 
 	}
 	private void checkFlags(int val)
@@ -91,8 +91,14 @@ public class JMOS6502 {
 			flags &= ~0x80;
 		}
 	}
+	private byte pop(){
+		return (byte)(ram[0x100 + ++sp] & 0xff);
+	}
+	private void push(byte value){
+		ram[0x100 + sp--] = value;
+	}
 	private void popPC(){
-		pc = ram[0x100 + ++sp] & 0xff;
+		pc =  ram[0x100 + ++sp] & 0xff;
 		pc |= ram[0x100 + ++sp] << 8;
 		pc &=0xFFFF;
 	}
@@ -102,11 +108,12 @@ public class JMOS6502 {
 		ram[0x100 + sp--] = (byte)(pc & 0xFF);
 		pc -= 2;
 	}
+
 	private void doJumps(int op)
 	{
 		switch(op)
 		{
-			case 0x4C:
+			case 0x4C://JMP
 				cycles += 3;
 				pc =   (read_ram(pc+1) & 0xFF) + (read_ram(pc+2) << 8);
 				break;
@@ -115,7 +122,7 @@ public class JMOS6502 {
 				pc =   (read_ram(pc+1) & 0xFF) + (read_ram(pc+2) << 8);
 				cycles += 6;
 				break;
-			case 0x60:
+			case 0x60://RTS
 				popPC();
 				pc++;
 				cycles +=6;
@@ -124,11 +131,14 @@ public class JMOS6502 {
 	}
 	private void doFlags(int op){
 		switch(op){
-		case 0x18: flags &= ~0x1; pc++; cycles += 2; break;
-		case 0x38: flags |= 0x1; pc++; cycles += 2; break;
-		//case 0x18: flags &= ~0x1; pc++; cycles += 2; break;
-		case 0x78: flags |= 0x04; pc++; cycles += 2; break;
-		case 0xF8: flags |= 0x08; pc++; cycles += 2; break;
+		//PHP
+		case 0x08: ram[0x100 + sp--] = (byte)(flags | 0x10); pc++; cycles += 3; break;
+		case 0x18: flags &= ~0x1; 					pc++; cycles += 2; break;
+		case 0x38: flags |= 0x1; 					pc++; cycles += 2; break;
+		//case 0x18: flags &= ~0x1; 				pc++; cycles += 2; break;
+		case 0x78: flags |= 0x04; 					pc++; cycles += 2; break;
+		case 0xD8: flags &= ~0x08;						pc++; cycles += 2; break;
+		case 0xF8: flags |= 0x08; 					pc++; cycles += 2; break;
 		}
 	}
 	private void doBranch(boolean condition){
@@ -143,6 +153,8 @@ public class JMOS6502 {
 	}
 	public void logger(int op){
 		switch(op){
+		//AND
+		case 0x29: printImmediate("AND"); break;
 		//BIT
 		case 0x24: printZeroPage("BIT"); break;
 		//Branches
@@ -154,10 +166,14 @@ public class JMOS6502 {
 		case 0xB0: printBranch("BCS"); break;
 		case 0xD0: printBranch("BNE"); break;
 		case 0xF0: printBranch("BEQ"); break;
+		//CMP
+		case 0xC9: printImmediate("CMP"); break;
 		//Flags
+		case 0x08: printImplied("PHP"); break;
 		case 0x18: printImplied("CLC"); break;
 		case 0x38: printImplied("SEC"); break;
 		case 0x78: printImplied("SEI"); break;
+		case 0xD8: printImplied("CLD"); break;
 		case 0xF8: printImplied("SED"); break;
 
 		//JMPs
@@ -170,6 +186,10 @@ public class JMOS6502 {
 		case 0xA2: printImmediate("LDX"); break;
 		//NOP
 		case 0xEA: printImplied("NOP"); break;
+		//PHA
+		case 0x48: printImplied("PHA"); break;
+		//PLA
+		case 0x68: printImplied("PLA"); break;
 		//STX
 		case 0x85: printZeroPage("STA"); break;
 		//STX
@@ -187,13 +207,30 @@ public class JMOS6502 {
 		flags &= 0x3f;
 		flags |= value & 0xC0;
 	}
+	private void CMP(byte value){
+		if(a == value){
+			flags |= 0x2;
+		}
+		
+		if(a >= value){
+			flags |= 0x1;
+		}
+		
+		if((a - value) < 0){
+			flags |= 0x80;
+		}
+	}
 	public void do_op(){
 		int op = read_ram(pc) & 0xFF;
 		logger(op);
 		switch(op)
 		{
+		//AND
+		case 0x29: a &= readImmediate(); checkFlags(a); break;
 		//BIT
 		case 0x24: bit(readZeroPage()); break;
+		//CMP
+		case 0xC9: CMP(readImmediate()); break;
 		//Branches
 		case 0x10: doBranch((flags & 0x80) == 0); break;
 		case 0x30: doBranch((flags & 0x80) != 0); break;
@@ -204,7 +241,8 @@ public class JMOS6502 {
 		case 0xD0: doBranch((flags & 0x02) == 0); break;
 		case 0xF0: doBranch((flags & 0x02) != 0); break;
 		//Flags
-		case 0x18: case 0x38: case 0x58: case 0x78: case 0xB8: case 0xD8: case 0xF8:
+		case 0x08: case 0x18: case 0x38: case 0x58: 
+		case 0x78: case 0xB8: case 0xD8: case 0xF8:
 			doFlags(op);
 			break;
 		//Jumps
@@ -217,6 +255,10 @@ public class JMOS6502 {
 		case 0xA2: x = readImmediate(); checkFlags(x); break;
 		//NOP
 		case 0xEA: cycles += 2; pc++; break;
+		//PHA
+		case 0x48: push(a); pc++; cycles += 4; break;
+		//PLA
+		case 0x68: a = pop(); checkFlags(a); pc++; cycles += 4; break;
 		//STA
 		case 0x85: writeZeroPage(a); break;
 		//STX
